@@ -3,9 +3,9 @@
     "displayName": "Stardew Pets",
     "description": "Stardew Valley pets for VSCode 😸",
     "version": "2.3.2",
-    "publisher": "Botpa",
+    "publisher": "FunnyBug62",
     "author": {
-        "name": "Botpa"
+        "name": "FunnyBug62"
     },
     "icon": "media/icons/icon.png",
     "galleryBanner": {
@@ -161,10 +161,10 @@
         }
     },
     "scripts": {
-        "vscode:prepublish": "npm run build-game && npm run compile",
+        "vscode:prepublish": "npm run compile && npm run build-all",
         "watch": "tsc -watch -p ./",
         "compile": "tsc -p ./ --noEmit",
-        "build-extension": "esbuild src/extension.ts --bundle --platform=node --outfile=out/extension.js --external:vscode",
+        "build-extension": "esbuild src/extension.ts --bundle --platform=node --outfile=out/extension.js --external:vscode --minify",
         "build-game": "esbuild src/game/main.ts --bundle --outfile=media/main.js --minify",
         "build-all": "npm run build-extension && npm run build-game"
     },

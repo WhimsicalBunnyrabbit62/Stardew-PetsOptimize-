@@ -251,7 +251,7 @@ window.addEventListener('message', (event) => {
         //Update monsters toggle
         case 'monsters':
             //Clear monsters
-            for (const monster of Game.monsters) monster.remove();
+            for (const monster of [...Game.monsters]) monster.remove(); //Copy since remove() edits the list
             
             //Toggle spawner
             if (message.value) {

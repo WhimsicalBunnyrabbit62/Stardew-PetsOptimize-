@@ -513,11 +513,14 @@ class PetMoods {
 export class PetAI extends AI {
 
     //Moods
-    #moodSprite: HTMLImageElement = new Image();
+    #moodSprite: HTMLImageElement = Game.loadImage('emotes.png');
     #moodOffset: Vec2 = new Vec2();
     #moodElevation: number = 0; //Elevation is inverted, positive is down, negative is up
     #moodShow: boolean = false;
-    #moodHideTimeout: Timeout = new Timeout(() => this.#moodShow = false);
+    #moodHideTimeout: Timeout = new Timeout(() => {
+        this.#moodShow = false;
+        Game.requestDraw();
+    });
     #moodHeartTimeout: Timeout = new Timeout(() => this.#setRandomMood());
 
 
@@ -530,9 +533,6 @@ export class PetAI extends AI {
             //Mood elevation
             if (typeof config.moodElevation === 'number') this.#moodElevation = -config.moodElevation; //Elevation is inverted
         }
-
-        //Init moods sprite
-        this.#moodSprite.src = `${Game.mediaURI}sprites/emotes.png`;
 
         //Random mood
         this.#setRandomMood()
@@ -559,6 +559,7 @@ export class PetAI extends AI {
     //Mood
     #setMood(moodOffset: Vec2) {
         this.#moodOffset = moodOffset.multiply(PetMoods.size);
+        Game.requestDraw();
     }
 
     #setHeartMood() {
@@ -577,6 +578,7 @@ export class PetAI extends AI {
     showMood() {
         //Show mood
         this.#moodShow = true;
+        Game.requestDraw();
 
         //Clear hide mood timeout & start a new one
         this.#moodHideTimeout.wait(2000);

@@ -306,7 +306,7 @@ export class Animation {
         this.#finished = false;
     }
 
-    update() {
+    update(): AnimationFrame {
         //Not finished
         if (!this.finished) {
             //Add one to counter
@@ -329,9 +329,8 @@ export class Animation {
             }
         }
 
-        //Return animation sprite position
-        const offset = this.#frames[this.#frame];
-        return new Vec2(offset[0], offset[1]);
+        //Return animation sprite position (not copied to avoid allocating every frame, do not modify)
+        return this.#frames[this.#frame];
     }
 
 }
@@ -400,7 +399,7 @@ export class GameObject {
             if (typeof config.sortingLayer === 'number') this.#sortingLayer = config.sortingLayer;
 
             //Rendering (sprite sheet)
-            if (typeof config.image === 'string') this.#image.src = `${Game.mediaURI}sprites/${config.image}`;
+            if (typeof config.image === 'string') this.#image = Game.loadImage(config.image);
             if (typeof config.spriteOffset === 'object') this.#spriteOffset = config.spriteOffset;
             if (typeof config.spriteSheetOffset === 'object') this.#spriteSheetOffset = config.spriteSheetOffset;
 
@@ -410,22 +409,36 @@ export class GameObject {
 
         //Add to game objects list
         Game.objects.push(this);
+        Game.requestSort();
+        Game.requestDraw();
     }
 
     remove() {
         //Remove from objects list
         Game.objects.removeItem(this);
+        Game.requestDraw();
     }
 
     setActive(active: boolean) {
         //Set active
         this.#active = active;
+        Game.requestDraw();
     }
 
     //Update
     update() {
-        //Update animation sprite offset
-        if (this.#animation) this.#spriteOffset = this.#animation.update().multiply(this.#animation.pixelOffset ? new Vec2(1) : this.size);
+        //No animation
+        if (!this.#animation) return;
+
+        //Get animation sprite offset
+        const frame = this.#animation.update();
+        const x = this.#animation.pixelOffset ? frame[0] : frame[0] * this.size.x;
+        const y = this.#animation.pixelOffset ? frame[1] : frame[1] * this.size.y;
+
+        //Update sprite offset only if the frame changed (avoids allocating & redrawing every frame)
+        if (x === this.#spriteOffset.x && y === this.#spriteOffset.y) return;
+        this.#spriteOffset = new Vec2(x, y);
+        Game.requestDraw();
     }
 
     //Clicks
@@ -452,9 +465,9 @@ export class GameObject {
         //Get relative click position
         const relPos = pos.subtract(this.pos);  
 
-        //Change canvas size to match object size
-        canvas.width = this.size.x;
-        canvas.height = this.size.y;
+        //Grow canvas to fit object (resizing reallocates the canvas, so never shrink it)
+        if (canvas.width < this.size.x) canvas.width = this.size.x;
+        if (canvas.height < this.size.y) canvas.height = this.size.y;
         
         //Clear canvas & draw object at origin
         ctx.clearRect(0, 0, this.size.x, this.size.y);
@@ -541,6 +554,7 @@ export class GameObject {
         if (animation == this.animation && !force) return;
         this.#animation = animation;
         this.animation?.reset();
+        Game.requestDraw();
     }
 
     //Movement
@@ -560,6 +574,10 @@ export class GameObject {
 
         //Update position
         this.#pos = pos;
+        if (!moved) {
+            Game.requestSort();
+            Game.requestDraw();
+        }
 
         //Return if moved
         return !moved;
@@ -664,13 +682,17 @@ export class Game {
         this.#windowSize = new Vec2(window.innerWidth, window.innerHeight);
         this.#windowSizeScaled = this.windowSize.divide(this.scale);
 
-        //Update buffer canvas size
-        this.canvasBuffer.width = this.windowSize.x;
-        this.canvasBuffer.height = this.windowSize.y;
+        //Update canvas size (the canvas is scaled up with CSS, so it only needs the scaled size)
+        this.canvas.width = Math.ceil(this.windowSizeScaled.x);
+        this.canvas.height = Math.ceil(this.windowSizeScaled.y);
 
         //Fit all pets & monsters on screen
         this.pets.forEach(pet => pet.moveTo(pet.pos))
         this.monsters.forEach(monster => monster.moveTo(monster.pos))
+
+        //Resizing clears the canvas
+        this.requestSort();
+        this.requestDraw();
     }
 
     //Update
@@ -695,31 +717,53 @@ export class Game {
             //Update object
             obj.update();
         }
-
-        //Draw objects
-        this.draw();
     }
 
     //Rendering
     static #background: HTMLElement = document.getElementById('background') as HTMLElement;
     static #canvas: HTMLCanvasElement = document.getElementById('canvas') as HTMLCanvasElement;         //Real canvas
-    static #canvasBuffer: HTMLCanvasElement = document.createElement('canvas') as HTMLCanvasElement;    //Double buffer rendering (to prevent flickers after resizing the screen)
     static #canvasAlphaTest: HTMLCanvasElement = document.createElement('canvas') as HTMLCanvasElement; //Used to check for clicks in transparent pixels
     static #context: CanvasRenderingContext2D;
-    static #contextBuffer: CanvasRenderingContext2D;
     static #contextAlphaTest: CanvasRenderingContext2D;
+    static #needsDraw: boolean = true;  //Something visible changed since the last draw
+    static #needsSort: boolean = true;  //Something moved or was added since the last sort
 
     static get background(): HTMLElement { return this.#background; }
     static get canvas(): HTMLCanvasElement { return this.#canvas; }
-    static get canvasBuffer(): HTMLCanvasElement { return this.#canvasBuffer; }
     static get canvasAlphaTest(): HTMLCanvasElement { return this.#canvasAlphaTest; }
     static get context(): CanvasRenderingContext2D { return this.#context; }
-    static get contextBuffer(): CanvasRenderingContext2D { return this.#contextBuffer; }
     static get contextAlphaTest(): CanvasRenderingContext2D { return this.#contextAlphaTest; }
 
+    static requestDraw = () => {
+        this.#needsDraw = true;
+    }
+
+    static requestSort = () => {
+        this.#needsSort = true;
+    }
+
+    //Images (shared between objects so each sprite sheet is only loaded once)
+    static #images: Map<string, HTMLImageElement> = new Map();
+
+    static loadImage = (path: string): HTMLImageElement => {
+        //Already loaded
+        let image = this.#images.get(path);
+        if (image) return image;
+
+        //Load image & redraw once it finishes loading
+        image = new Image();
+        image.onload = this.requestDraw;
+        image.src = `${this.mediaURI}sprites/${path}`;
+        this.#images.set(path, image);
+        return image;
+    }
+
     static draw = () => {
+        //Drawn
+        this.#needsDraw = false;
+
         //Clear canvas
-        this.contextBuffer.clearRect(0, 0, this.canvasBuffer.width, this.canvasBuffer.height);
+        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
         //Sort objects
         this.sortObjects();
@@ -736,13 +780,8 @@ export class Game {
             if (inDecorMode && !(obj as Decoration).isDecoration) continue;
 
             //Draw object
-            obj.draw(this.contextBuffer);
+            obj.draw(this.context);
         }
-
-        //Draw double bufffer into real canvas
-        this.canvas.width = this.canvasBuffer.width;
-        this.canvas.height = this.canvasBuffer.height;
-        this.context.drawImage(this.canvasBuffer, 0, 0);
     }
 
     //Game objects
@@ -761,6 +800,10 @@ export class Game {
     static get monsterSpawner() { return this.#monsterSpawner; }
 
     static sortObjects = () => {
+        //Already sorted
+        if (!this.#needsSort) return;
+        this.#needsSort = false;
+
         //Sort objects back-to-front
         this.objects.sort((a, b) => { return a.sortingLayer != b.sortingLayer ? a.sortingLayer - b.sortingLayer : a.sortingOrder - b.sortingOrder; }); 
     }
@@ -798,6 +841,7 @@ export class Game {
         //Update action & cursor
         this.#action = action;
         Cursor.setIcon(action);
+        this.requestDraw(); //Decor mode hides everything but decoration
 
         //Close menus & toggle decor mode overlay
         Menus.close();
@@ -823,6 +867,7 @@ export class Game {
     static #deltaAccumulation: number = 0;
     static #lastFrameTimestamp: number;
     static #animationFrame: number;
+    static #maxCatchUpUpdates: number = 30;
 
     static gameLoop = (timestamp: number) => {
         //Check if last frame timestamp is init
@@ -834,13 +879,22 @@ export class Game {
 
         //Calculate the amount of updates needed to perform
         const interval = (1000 / this.fps);
-        const updates = Math.floor(this.#deltaAccumulation / interval);
+        let updates = Math.floor(this.#deltaAccumulation / interval);
+
+        //Update delta accumulation
+        if (updates > this.#maxCatchUpUpdates) {
+            //Too far behind (the loop was paused) -> Skip the missed time instead of simulating all of it at once
+            updates = this.#maxCatchUpUpdates;
+            this.#deltaAccumulation = 0;
+        } else {
+            this.#deltaAccumulation -= updates * interval;
+        }
 
         //Perform updates
         for (let update = 0; update < updates; update++) this.update();
 
-        //Update delta accumulation
-        this.#deltaAccumulation = this.#deltaAccumulation - (updates * interval);
+        //Draw only if something visible changed
+        if (this.#needsDraw) this.draw();
 
         //Keep the loop going
         this.#animationFrame = requestAnimationFrame(this.gameLoop);
@@ -852,8 +906,10 @@ export class Game {
 
         //Init canvas contexts
         this.#context = this.canvas.getContext('2d')!;
-        this.#contextBuffer = this.canvasBuffer.getContext('2d', { willReadFrequently: true })!;
         this.#contextAlphaTest = this.canvasAlphaTest.getContext('2d', { willReadFrequently: true })!;
+
+        //Size canvas
+        this.onResize();
 
         //Create ball
         this.#ball = new Ball();
@@ -871,6 +927,7 @@ export class Game {
         //Remove decor
         for (const decor of Game.decoration) Game.objects.removeItem(decor);
         this.#decoration = [];
+        this.requestDraw();
 
         //Close menus & exit decor mode
         Menus.close();

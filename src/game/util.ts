@@ -197,7 +197,7 @@ Array.prototype.removeAt = function<T>(index: number): T {
 
 Array.prototype.removeItem = function<T>(item: T): number {
     const index = this.indexOf(item);
-    this.splice(index, 1);
+    if (index !== -1) this.splice(index, 1); //splice(-1, 1) would remove the last item
     return index;
 }
 

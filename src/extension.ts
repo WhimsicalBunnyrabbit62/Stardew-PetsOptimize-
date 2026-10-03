@@ -136,8 +136,43 @@ function loadGame() {
     if (saveUpdated) saveGame();
 }
 
+//Saves are debounced so frequent changes (like dragging decoration) only write the file once
+const saveDelay = 500;
+let saveTimeout: NodeJS.Timeout | undefined;
+let saveQueue: Promise<void> = Promise.resolve();
+
 function saveGame() {
-    fs.writeFileSync(savePath, JSON.stringify(save, null, 4));
+    //Restart save timer
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+        saveTimeout = undefined;
+
+        //Serialize now & queue the write so writes never overlap
+        const data = JSON.stringify(save, null, 4);
+        saveQueue = saveQueue
+            .then(() => writeSaveFile(data))
+            .catch(e => console.error('Stardew Pets: Failed to save game', e));
+    }, saveDelay);
+}
+
+async function writeSaveFile(data: string) {
+    //Write to a temp file & rename it so a crash mid-write can't corrupt the save
+    const tempPath = savePath + '.tmp';
+    await fs.promises.writeFile(tempPath, data);
+    await fs.promises.rename(tempPath, savePath);
+}
+
+async function flushSave() {
+    //Write pending save now
+    if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = undefined;
+        const data = JSON.stringify(save, null, 4);
+        saveQueue = saveQueue.then(() => writeSaveFile(data));
+    }
+
+    //Wait for all writes to finish
+    await saveQueue.catch(() => {});
 }
 
 function initGame() {
@@ -357,7 +392,7 @@ export function activate(context: vscode.ExtensionContext) {
     webview = new WebViewProvider(context);
     context.subscriptions.push(vscode.window.registerWebviewViewProvider(WebViewProvider.viewType, webview));
 
-    vscode.workspace.onDidChangeConfiguration(event => {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
         //Update config
         config = vscode.workspace.getConfiguration('stardew-pets');
 
@@ -384,7 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
                 value: config.get('monsters')
             })
         }
-    })
+    }))
 
 
 
@@ -467,12 +502,16 @@ export function activate(context: vscode.ExtensionContext) {
 
     //Open save file
     const commandOpenSaveFile = vscode.commands.registerCommand('stardew-pets.openSaveFile', async () => {
+        await flushSave();
         const uri = vscode.Uri.file(savePath);
         const success = await vscode.commands.executeCommand('vscode.openFolder', uri);
     });
 
     //Reload save file
     const commandReloadSaveFile = vscode.commands.registerCommand('stardew-pets.reloadSaveFile', async () => {
+        //Finish pending writes so they don't overwrite the reloaded save
+        await flushSave();
+
         //Reset extension
         webview.postMessage({ type: 'reset' });
 
@@ -498,8 +537,11 @@ export function activate(context: vscode.ExtensionContext) {
 | $$$$$$$/|  $$$$$$$|  $$$$$$$|  $$$$$$$  |  $$$$/| $$   \  $/  |  $$$$$$$  |  $$$$/|  $$$$$$$
 |_______/  \_______/ \_______/ \_______/   \___/  |__/    \_/    \_______/   \___/   \______*/
 
-export function deactivate() {
+export async function deactivate() {
     console.log('Stardew Pets is now deactivated 😿')
+
+    //Write pending save
+    await flushSave();
 }
 
 
